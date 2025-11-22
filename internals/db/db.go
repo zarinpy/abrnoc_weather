@@ -2,12 +2,13 @@ package db
 
 import (
 	"fmt"
+	"log"
+	"os"
+
 	"github.com/joho/godotenv"
 	"github.com/zarinpy/abrnoc_weather/internals/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"log"
-	"os"
 )
 
 var DB *gorm.DB
@@ -25,7 +26,11 @@ func Connect() {
 	if err != nil {
 		log.Fatalf("Error connecting to database: %v", err)
 	}
-	if err := DB.AutoMigrate(&models.Weather{}); err != nil {
+
+	// Enable uuid-ossp extension if needed (optional, since we use BeforeCreate hook)
+	DB.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
+
+	if err := DB.AutoMigrate(&models.Weather{}, &models.User{}); err != nil {
 		log.Fatalf("AutoMigrate failed: %v", err)
 	}
 }

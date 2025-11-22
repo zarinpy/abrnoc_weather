@@ -1,13 +1,14 @@
 package models
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"time"
 )
 
 type Weather struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
+	ID          uuid.UUID `gorm:"type:uuid;primary_key" json:"id"`
 	CityName    string    `gorm:"not null" json:"cityName" validate:"required"`
 	Country     string    `gorm:"not null" json:"country" validate:"required"`
 	Temperature float64   `json:"temperature" validate:"required"`

@@ -1,0 +1,428 @@
+basePath: /
+definitions:
+  handlers.CreateWeatherRequest:
+    properties:
+      cityName:
+        example: London
+        type: string
+      country:
+        example: GB
+        type: string
+    required:
+    - cityName
+    - country
+    type: object
+  handlers.DeleteWeatherResponse:
+    properties:
+      message:
+        example: Weather record deleted successfully
+        type: string
+    type: object
+  handlers.LoginRequest:
+    properties:
+      password:
+        example: password123
+        type: string
+      username:
+        example: testuser
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  handlers.LoginResponse:
+    properties:
+      token:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        type: string
+    type: object
+  handlers.PaginatedWeatherResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/models.Weather'
+        type: array
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      totalPages:
+        type: integer
+    type: object
+  handlers.RegisterRequest:
+    properties:
+      password:
+        example: password123
+        minLength: 6
+        type: string
+      username:
+        example: testuser
+        maxLength: 50
+        minLength: 3
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  handlers.UpdateWeatherRequest:
+    properties:
+      cityName:
+        example: London
+        type: string
+      country:
+        example: GB
+        type: string
+      description:
+        example: clear sky
+        type: string
+      humidity:
+        example: 65
+        type: integer
+      temperature:
+        example: 15.5
+        type: number
+      windSpeed:
+        example: 3.2
+        type: number
+    type: object
+  models.User:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      updatedAt:
+        type: string
+      username:
+        maxLength: 50
+        minLength: 3
+        type: string
+    required:
+    - username
+    type: object
+  models.Weather:
+    properties:
+      cityName:
+        type: string
+      country:
+        type: string
+      createdAt:
+        type: string
+      description:
+        type: string
+      fetchedAt:
+        type: string
+      humidity:
+        maximum: 100
+        minimum: 0
+        type: integer
+      id:
+        type: string
+      temperature:
+        type: number
+      updatedAt:
+        type: string
+      windSpeed:
+        minimum: 0
+        type: number
+    required:
+    - cityName
+    - country
+    - description
+    - humidity
+    - temperature
+    - windSpeed
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: A RESTful weather API service with authentication
+  title: Cloudzy Weather API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate user and return JWT token
+      parameters:
+      - description: Login credentials
+        in: body
+        name: credentials
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.LoginResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Login user
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Create a new user account with hashed password
+      parameters:
+      - description: User registration
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.User'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Username already exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Register new user
+      tags:
+      - auth
+  /weather:
+    get:
+      description: Retrieve paginated weather records from the database
+      parameters:
+      - default: 1
+        description: 'Page number (default: 1)'
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 10
+        description: 'Number of records per page (default: 10, max: 100)'
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.PaginatedWeatherResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get all weather records
+      tags:
+      - weather
+    post:
+      consumes:
+      - application/json
+      description: Fetch current weather from OpenWeatherMap API and store it in the
+        database
+      parameters:
+      - description: Weather creation request
+        in: body
+        name: weather
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateWeatherRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Weather'
+        "400":
+          description: Bad request or failed to fetch weather
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create new weather entry
+      tags:
+      - weather
+  /weather/{id}:
+    delete:
+      description: Delete a weather record by ID
+      parameters:
+      - description: Weather ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.DeleteWeatherResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Weather record not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete weather entry
+      tags:
+      - weather
+    get:
+      description: Retrieve a specific weather record by its ID
+      parameters:
+      - description: Weather ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Weather'
+        "404":
+          description: Weather record not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get weather by ID
+      tags:
+      - weather
+    put:
+      consumes:
+      - application/json
+      description: Update an existing weather record
+      parameters:
+      - description: Weather ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Weather update request
+        in: body
+        name: weather
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateWeatherRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Weather'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Weather record not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update weather entry
+      tags:
+      - weather
+  /weather/latest/{cityName}:
+    get:
+      description: Get the most recent weather record for a specific city
+      parameters:
+      - description: City Name
+        in: path
+        name: cityName
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Weather'
+        "404":
+          description: No record found for this city
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get latest weather for city
+      tags:
+      - weather
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and JWT token.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
