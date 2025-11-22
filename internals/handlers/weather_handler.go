@@ -29,7 +29,6 @@ type PaginatedWeatherResponse struct {
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /weather [get]
 func GetAllWeather(c *gin.Context) {
-	// Get pagination parameters from query string
 	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if err != nil || page < 1 {
 		c.JSON(400, gin.H{"error": "Invalid page number"})
@@ -42,19 +41,15 @@ func GetAllWeather(c *gin.Context) {
 		return
 	}
 
-	// Maximum limit to prevent excessive queries
 	if limit > 100 {
 		limit = 100
 	}
 
-	// Calculate offset
 	offset := (page - 1) * limit
 
-	// Get total count
 	var total int64
 	db.DB.Model(&models.Weather{}).Count(&total)
 
-	// Get paginated results
 	var weathers []models.Weather
 	result := db.DB.Order("created_at DESC").Offset(offset).Limit(limit).Find(&weathers)
 	if result.Error != nil {
@@ -62,7 +57,6 @@ func GetAllWeather(c *gin.Context) {
 		return
 	}
 
-	// Calculate total pages
 	totalPages := int((total + int64(limit) - 1) / int64(limit))
 	if totalPages == 0 {
 		totalPages = 1
@@ -191,7 +185,6 @@ func UpdateWeather(c *gin.Context) {
 		return
 	}
 
-	// Update fields if provided
 	if input.CityName != "" {
 		weather.CityName = input.CityName
 	}

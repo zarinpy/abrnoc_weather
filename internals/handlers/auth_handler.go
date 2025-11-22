@@ -51,14 +51,12 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// Compare password with hashed password
 	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password))
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
-	// Generate JWT token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"username": user.Username,
 		"user_id":  user.ID.String(),
@@ -99,7 +97,6 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// Check if username already exists
 	var existingUser models.User
 	result := db.DB.Where("username = ?", input.Username).First(&existingUser)
 	if result.Error == nil {
@@ -107,14 +104,12 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// Hash password with bcrypt (cost factor 12 for strong hashing)
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), 12)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
 		return
 	}
 
-	// Create user
 	user := models.User{
 		Username: input.Username,
 		Password: string(hashedPassword),
@@ -125,7 +120,6 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// Don't return password
 	user.Password = ""
 	c.JSON(http.StatusCreated, user)
 }

@@ -27,7 +27,6 @@ func Connect() {
 		log.Fatalf("Error connecting to database: %v", err)
 	}
 
-	// Enable uuid-ossp extension if needed (optional, since we use BeforeCreate hook)
 	DB.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
 
 	if err := DB.AutoMigrate(&models.Weather{}, &models.User{}); err != nil {

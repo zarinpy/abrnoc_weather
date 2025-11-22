@@ -52,7 +52,10 @@ func FetchCurrentWeather(city, country string) (*models.Weather, error) {
 	defer resp.Body.Close()
 
 	var data OpenWeatherResponse
-	json.NewDecoder(resp.Body).Decode(&data)
+	decodeErr := json.NewDecoder(resp.Body).Decode(&data)
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
 
 	weather := &models.Weather{
 		CityName:    data.Name,
