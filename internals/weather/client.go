@@ -3,7 +3,6 @@ package weather
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
@@ -30,10 +29,8 @@ type OpenWeatherResponse struct {
 }
 
 func init() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
+	// Try to load .env file, but don't fail if it doesn't exist (useful for tests)
+	_ = godotenv.Load()
 }
 
 func FetchCurrentWeather(city, country string) (*models.Weather, error) {
