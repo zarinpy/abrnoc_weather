@@ -8,7 +8,7 @@ A RESTful weather API service built with Go that fetches and stores weather data
 
 1. **Clone the repository:**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/zarinpy/abrnoc_weather
    cd abrnoc_weather
    ```
 
@@ -18,11 +18,9 @@ A RESTful weather API service built with Go that fetches and stores weather data
    ```
 
 3. **Set up PostgreSQL database:**
+
+    using psql
    ```bash
-   # Create database
-   createdb abrnoc_weather
-   
-   # Or using psql
    psql -U postgres -c "CREATE DATABASE abrnoc_weather;"
    ```
 
@@ -62,8 +60,21 @@ A RESTful weather API service built with Go that fetches and stores weather data
    docker-compose up --build
    ```
 
-### Generating Swagger Documentation
+## Testing
 
+The project includes comprehensive test coverage for authentication and weather endpoints.
+
+### Prerequisites
+
+Install test dependencies:
 ```bash
-swag init
+go get github.com/stretchr/testify/assert
+go get gorm.io/driver/sqlite
+```
+
+### Running Tests
+
+**Run all tests:**
+```bash
+go test ./internals/handlers/...
 ```
