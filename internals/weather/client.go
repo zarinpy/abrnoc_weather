@@ -1,17 +1,36 @@
 package weather
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
-	"github.com/joho/godotenv"
 	"github.com/zarinpy/abrnoc_weather/internals/models"
 )
 
-type OpenWeatherResponse struct {
+// Client defines behavior for fetching weather data.
+type Client interface {
+	FetchCurrentWeather(ctx context.Context, city, country string) (*models.Weather, error)
+}
+
+type openWeatherClient struct {
+	apiKey string
+	client *http.Client
+}
+
+// NewClient returns a weather client backed by OpenWeather API.
+func NewClient(apiKey string) Client {
+	return &openWeatherClient{
+		apiKey: apiKey,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+type openWeatherResponse struct {
 	Main struct {
 		Temp     float64 `json:"temp"`
 		Humidity int     `json:"humidity"`
@@ -28,30 +47,36 @@ type OpenWeatherResponse struct {
 	} `json:"sys"`
 }
 
-func init() {
-	// Try to load .env file, but don't fail if it doesn't exist (useful for tests)
-	_ = godotenv.Load()
-}
-
-func FetchCurrentWeather(city, country string) (*models.Weather, error) {
-	apiKey := os.Getenv("OPENWEATHER_API_KEY")
+func (c *openWeatherClient) FetchCurrentWeather(ctx context.Context, city, country string) (*models.Weather, error) {
 	url := fmt.Sprintf(
 		"https://api.openweathermap.org/data/2.5/weather?q=%s,%s&appid=%s&units=metric",
 		city,
 		country,
-		apiKey,
+		c.apiKey,
 	)
 
-	resp, err := http.Get(url)
-	if err != nil || resp.StatusCode != 200 {
-		return nil, fmt.Errorf("city not found or API error", err)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build weather request: %w", err)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("call weather API: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var data OpenWeatherResponse
-	decodeErr := json.NewDecoder(resp.Body).Decode(&data)
-	if decodeErr != nil {
-		return nil, decodeErr
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("weather API responded with status %d", resp.StatusCode)
+	}
+
+	var data openWeatherResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode weather response: %w", err)
+	}
+
+	if len(data.Weather) == 0 {
+		return nil, fmt.Errorf("weather data missing description")
 	}
 
 	weather := &models.Weather{

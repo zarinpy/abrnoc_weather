@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,27 +11,41 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/zarinpy/abrnoc_weather/internals/db"
 	"github.com/zarinpy/abrnoc_weather/internals/models"
 	"github.com/zarinpy/abrnoc_weather/internals/test"
+	"gorm.io/gorm"
 )
 
-func setupWeatherTestRouter() *gin.Engine {
-	gin.SetMode(gin.TestMode)
+type stubWeatherClient struct{}
 
-	// Setup test database
-	testDB := test.SetupTestDB()
-	db.DB = testDB
-
-	router := gin.New()
-	router.GET("/weather", GetAllWeather)
-
-	return router
+func (stubWeatherClient) FetchCurrentWeather(_ context.Context, city, country string) (*models.Weather, error) {
+	return &models.Weather{
+		CityName:    city,
+		Country:     country,
+		Temperature: 20,
+		Description: "stub",
+		Humidity:    50,
+		WindSpeed:   1.0,
+		FetchedAt:   time.Now(),
+	}, nil
 }
 
-func createTestWeatherRecords(count int) {
+func setupWeatherTestRouter(t *testing.T) (*gin.Engine, *WeatherHandler) {
+	t.Helper()
+
+	gin.SetMode(gin.TestMode)
+	testDB := test.SetupTestDB()
+	handler := NewWeatherHandler(testDB, stubWeatherClient{})
+
+	router := gin.New()
+	router.GET("/weather", handler.GetAllWeather)
+
+	return router, handler
+}
+
+func createTestWeatherRecords(dbInstance *gorm.DB, count int) {
 	for i := 0; i < count; i++ {
-		weather := models.Weather{
+		record := models.Weather{
 			ID:          uuid.New(),
 			CityName:    "TestCity",
 			Country:     "TC",
@@ -39,19 +54,18 @@ func createTestWeatherRecords(count int) {
 			Humidity:    65,
 			WindSpeed:   3.2,
 			FetchedAt:   time.Now(),
-			CreatedAt:   time.Now().Add(time.Duration(i) * time.Second), // Different timestamps for ordering
+			CreatedAt:   time.Now().Add(time.Duration(i) * time.Second),
 		}
-		db.DB.Create(&weather)
+		dbInstance.Create(&record)
 	}
 }
 
 func TestGetAllWeather_DefaultPagination(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
-	// Create 15 test records
-	createTestWeatherRecords(15)
+	createTestWeatherRecords(handler.db, 15)
 
 	req, _ := http.NewRequest("GET", "/weather", nil)
 	w := httptest.NewRecorder()
@@ -70,12 +84,11 @@ func TestGetAllWeather_DefaultPagination(t *testing.T) {
 }
 
 func TestGetAllWeather_WithPageAndLimit(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
-	// Create 25 test records
-	createTestWeatherRecords(25)
+	createTestWeatherRecords(handler.db, 25)
 
 	req, _ := http.NewRequest("GET", "/weather?page=2&limit=10", nil)
 	w := httptest.NewRecorder()
@@ -94,12 +107,11 @@ func TestGetAllWeather_WithPageAndLimit(t *testing.T) {
 }
 
 func TestGetAllWeather_LastPage(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
-	// Create 15 test records
-	createTestWeatherRecords(15)
+	createTestWeatherRecords(handler.db, 15)
 
 	req, _ := http.NewRequest("GET", "/weather?page=2&limit=10", nil)
 	w := httptest.NewRecorder()
@@ -118,11 +130,9 @@ func TestGetAllWeather_LastPage(t *testing.T) {
 }
 
 func TestGetAllWeather_EmptyResult(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
-
-	// No records created
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	req, _ := http.NewRequest("GET", "/weather", nil)
 	w := httptest.NewRecorder()
@@ -141,12 +151,11 @@ func TestGetAllWeather_EmptyResult(t *testing.T) {
 }
 
 func TestGetAllWeather_MaxLimit(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
-	// Create 150 test records
-	createTestWeatherRecords(150)
+	createTestWeatherRecords(handler.db, 150)
 
 	req, _ := http.NewRequest("GET", "/weather?page=1&limit=200", nil) // Requesting more than max
 	w := httptest.NewRecorder()
@@ -162,9 +171,9 @@ func TestGetAllWeather_MaxLimit(t *testing.T) {
 }
 
 func TestGetAllWeather_InvalidPage(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	req, _ := http.NewRequest("GET", "/weather?page=0", nil)
 	w := httptest.NewRecorder()
@@ -174,9 +183,9 @@ func TestGetAllWeather_InvalidPage(t *testing.T) {
 }
 
 func TestGetAllWeather_InvalidLimit(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	req, _ := http.NewRequest("GET", "/weather?limit=0", nil)
 	w := httptest.NewRecorder()
@@ -186,9 +195,9 @@ func TestGetAllWeather_InvalidLimit(t *testing.T) {
 }
 
 func TestGetAllWeather_NegativePage(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	req, _ := http.NewRequest("GET", "/weather?page=-1", nil)
 	w := httptest.NewRecorder()
@@ -198,9 +207,9 @@ func TestGetAllWeather_NegativePage(t *testing.T) {
 }
 
 func TestGetAllWeather_NegativeLimit(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	req, _ := http.NewRequest("GET", "/weather?limit=-5", nil)
 	w := httptest.NewRecorder()
@@ -210,12 +219,11 @@ func TestGetAllWeather_NegativeLimit(t *testing.T) {
 }
 
 func TestGetAllWeather_Ordering(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
-	// Create 5 test records with different timestamps
-	createTestWeatherRecords(5)
+	createTestWeatherRecords(handler.db, 5)
 
 	req, _ := http.NewRequest("GET", "/weather?limit=5", nil)
 	w := httptest.NewRecorder()
@@ -236,12 +244,11 @@ func TestGetAllWeather_Ordering(t *testing.T) {
 }
 
 func TestGetAllWeather_CustomLimit(t *testing.T) {
-	router := setupWeatherTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupWeatherTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
-	// Create 20 test records
-	createTestWeatherRecords(20)
+	createTestWeatherRecords(handler.db, 20)
 
 	req, _ := http.NewRequest("GET", "/weather?page=1&limit=5", nil)
 	w := httptest.NewRecorder()

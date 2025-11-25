@@ -2,23 +2,34 @@ package handlers
 
 import (
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/zarinpy/abrnoc_weather/internals/db"
 	"github.com/zarinpy/abrnoc_weather/internals/models"
+	"github.com/zarinpy/abrnoc_weather/pkg/respond"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
-// LoginRequest represents the login request body
+// AuthHandler handles authentication endpoints.
+type AuthHandler struct {
+	db        *gorm.DB
+	jwtSecret string
+}
+
+// NewAuthHandler constructs an AuthHandler.
+func NewAuthHandler(db *gorm.DB, jwtSecret string) *AuthHandler {
+	return &AuthHandler{db: db, jwtSecret: jwtSecret}
+}
+
+// LoginRequest represents the login request body.
 type LoginRequest struct {
 	Username string `json:"username" example:"testuser" binding:"required"`
 	Password string `json:"password" example:"password123" binding:"required"`
 }
 
-// LoginResponse represents the login response
+// LoginResponse represents the login response.
 type LoginResponse struct {
 	Token string `json:"token" example:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."`
 }
@@ -33,46 +44,42 @@ type LoginResponse struct {
 // @Failure 400 {object} map[string]string "Bad request"
 // @Failure 401 {object} map[string]string "Unauthorized"
 // @Router /auth/login [post]
-func Login(c *gin.Context) {
-	var input struct {
-		Username string `json:"username" binding:"required"`
-		Password string `json:"password" binding:"required"`
-	}
+func (h *AuthHandler) Login(c *gin.Context) {
+	var input LoginRequest
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respond.ValidationError(c, err.Error())
 		return
 	}
 
 	var user models.User
-	result := db.DB.Where("username = ?", input.Username).First(&user)
+	result := h.db.Where("username = ?", input.Username).First(&user)
 	if result.Error != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		respond.Error(c, http.StatusUnauthorized, "invalid_credentials", "Invalid username or password")
 		return
 	}
 
-	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password))
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
+		respond.Error(c, http.StatusUnauthorized, "invalid_credentials", "Invalid username or password")
 		return
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"username": user.Username,
 		"user_id":  user.ID.String(),
-		"exp":      time.Now().Add(time.Hour * 24).Unix(), // Token expires in 24 hours
+		"exp":      time.Now().Add(24 * time.Hour).Unix(),
 	})
 
-	tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+	tokenString, err := token.SignedString([]byte(h.jwtSecret))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		respond.Error(c, http.StatusInternalServerError, "token_generation_failed", "Failed to generate token")
 		return
 	}
 
-	c.JSON(http.StatusOK, LoginResponse{Token: tokenString})
+	respond.JSON(c, http.StatusOK, LoginResponse{Token: tokenString})
 }
 
-// RegisterRequest represents the registration request body
+// RegisterRequest represents the registration request body.
 type RegisterRequest struct {
 	Username string `json:"username" example:"testuser" binding:"required,min=3,max=50"`
 	Password string `json:"password" example:"password123" binding:"required,min=6"`
@@ -89,24 +96,23 @@ type RegisterRequest struct {
 // @Failure 409 {object} map[string]string "Username already exists"
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /auth/register [post]
-func Register(c *gin.Context) {
+func (h *AuthHandler) Register(c *gin.Context) {
 	var input RegisterRequest
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respond.ValidationError(c, err.Error())
 		return
 	}
 
 	var existingUser models.User
-	result := db.DB.Where("username = ?", input.Username).First(&existingUser)
-	if result.Error == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
+	if err := h.db.Where("username = ?", input.Username).First(&existingUser).Error; err == nil {
+		respond.Error(c, http.StatusConflict, "username_exists", "Username already exists")
 		return
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), 12)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+		respond.Error(c, http.StatusInternalServerError, "password_hash_failed", "Failed to hash password")
 		return
 	}
 
@@ -115,11 +121,11 @@ func Register(c *gin.Context) {
 		Password: string(hashedPassword),
 	}
 
-	if err := db.DB.Create(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+	if err := h.db.Create(&user).Error; err != nil {
+		respond.Error(c, http.StatusInternalServerError, "user_create_failed", "Failed to create user")
 		return
 	}
 
 	user.Password = ""
-	c.JSON(http.StatusCreated, user)
+	respond.JSON(c, http.StatusCreated, user)
 }

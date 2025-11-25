@@ -1,13 +1,24 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	swag "github.com/swaggo/gin-swagger"
 	_ "github.com/zarinpy/abrnoc_weather/docs"
+	"github.com/zarinpy/abrnoc_weather/internals/config"
 	"github.com/zarinpy/abrnoc_weather/internals/db"
 	"github.com/zarinpy/abrnoc_weather/internals/handlers"
 	"github.com/zarinpy/abrnoc_weather/internals/middleware"
+	"github.com/zarinpy/abrnoc_weather/internals/weather"
 )
 
 // @title Cloudzy Weather API
@@ -20,32 +31,65 @@ import (
 // @name Authorization
 // @description Type "Bearer" followed by a space and JWT token.
 func main() {
-	db.Connect()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
 
-	r := gin.Default()
+	database, err := db.New(cfg.DB)
+	if err != nil {
+		log.Fatalf("init database: %v", err)
+	}
 
-	// Enable CORS
-	r.Use(middleware.CORSMiddleware())
+	weatherClient := weather.NewClient(cfg.Weather.OpenWeatherAPIKey)
+	authHandler := handlers.NewAuthHandler(database, cfg.Auth.JWTSecret)
+	weatherHandler := handlers.NewWeatherHandler(database, weatherClient)
+	authMiddleware := middleware.AuthRequired(cfg.Auth.JWTSecret)
+
+	r := gin.New()
+	r.Use(gin.Logger(), gin.Recovery(), middleware.CORSMiddleware())
 
 	r.GET("/swagger/*any", swag.WrapHandler(swaggerFiles.Handler))
 
-	// Auth routes (public)
-	r.POST("/auth/register", handlers.Register)
-	r.POST("/auth/login", handlers.Login)
+	r.POST("/auth/register", authHandler.Register)
+	r.POST("/auth/login", authHandler.Login)
 
-	// Public routes
-	r.GET("/weather", handlers.GetAllWeather)
-	r.GET("/weather/:id", handlers.GetWeatherByID)
-	r.GET("/weather/latest/:cityName", handlers.GetLatestByCity)
+	r.GET("/weather", weatherHandler.GetAllWeather)
+	r.GET("/weather/:id", weatherHandler.GetWeatherByID)
+	r.GET("/weather/latest/:cityName", weatherHandler.GetLatestByCity)
 
-	// Protected routes
 	protected := r.Group("/weather")
-	protected.Use(middleware.AuthRequired())
+	protected.Use(authMiddleware)
 	{
-		protected.POST("", handlers.CreateWeather)
-		protected.PUT("/:id", handlers.UpdateWeather)
-		protected.DELETE("/:id", handlers.DeleteWeather)
+		protected.POST("", weatherHandler.CreateWeather)
+		protected.PUT("/:id", weatherHandler.UpdateWeather)
+		protected.DELETE("/:id", weatherHandler.DeleteWeather)
 	}
 
-	r.Run("0.0.0.0:8080")
+	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: r,
+	}
+
+	go func() {
+		log.Printf("Starting server on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server exited properly")
 }

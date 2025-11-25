@@ -1,15 +1,28 @@
 package handlers
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zarinpy/abrnoc_weather/internals/db"
 	"github.com/zarinpy/abrnoc_weather/internals/models"
 	"github.com/zarinpy/abrnoc_weather/internals/weather"
+	"github.com/zarinpy/abrnoc_weather/pkg/respond"
+	"gorm.io/gorm"
 )
 
-// PaginatedWeatherResponse represents a paginated response
+// WeatherHandler manages weather endpoints.
+type WeatherHandler struct {
+	db            *gorm.DB
+	weatherClient weather.Client
+}
+
+// NewWeatherHandler constructs a WeatherHandler.
+func NewWeatherHandler(db *gorm.DB, client weather.Client) *WeatherHandler {
+	return &WeatherHandler{db: db, weatherClient: client}
+}
+
+// PaginatedWeatherResponse represents a paginated response.
 type PaginatedWeatherResponse struct {
 	Data       []models.Weather `json:"data"`
 	Page       int              `json:"page"`
@@ -28,16 +41,16 @@ type PaginatedWeatherResponse struct {
 // @Failure 400 {object} map[string]string "Bad request"
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /weather [get]
-func GetAllWeather(c *gin.Context) {
+func (h *WeatherHandler) GetAllWeather(c *gin.Context) {
 	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if err != nil || page < 1 {
-		c.JSON(400, gin.H{"error": "Invalid page number"})
+		respond.ValidationError(c, "Invalid page number")
 		return
 	}
 
 	limit, err := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	if err != nil || limit < 1 {
-		c.JSON(400, gin.H{"error": "Invalid limit"})
+		respond.ValidationError(c, "Invalid limit")
 		return
 	}
 
@@ -48,12 +61,12 @@ func GetAllWeather(c *gin.Context) {
 	offset := (page - 1) * limit
 
 	var total int64
-	db.DB.Model(&models.Weather{}).Count(&total)
+	h.db.Model(&models.Weather{}).Count(&total)
 
 	var weathers []models.Weather
-	result := db.DB.Order("created_at DESC").Offset(offset).Limit(limit).Find(&weathers)
+	result := h.db.Order("created_at DESC").Offset(offset).Limit(limit).Find(&weathers)
 	if result.Error != nil {
-		c.JSON(500, gin.H{"error": "Failed to fetch weather records"})
+		respond.Error(c, http.StatusInternalServerError, "weather_fetch_failed", "Failed to fetch weather records")
 		return
 	}
 
@@ -70,7 +83,7 @@ func GetAllWeather(c *gin.Context) {
 		TotalPages: totalPages,
 	}
 
-	c.JSON(200, response)
+	respond.JSON(c, http.StatusOK, response)
 }
 
 // @Summary Get latest weather for city
@@ -81,15 +94,15 @@ func GetAllWeather(c *gin.Context) {
 // @Success 200 {object} models.Weather
 // @Failure 404 {object} map[string]string "No record found for this city"
 // @Router /weather/latest/{cityName} [get]
-func GetLatestByCity(c *gin.Context) {
+func (h *WeatherHandler) GetLatestByCity(c *gin.Context) {
 	city := c.Param("cityName")
 	var weather models.Weather
-	result := db.DB.Order("fetched_at desc").Where("city_name = ?", city).First(&weather)
+	result := h.db.Order("fetched_at desc").Where("city_name = ?", city).First(&weather)
 	if result.Error != nil {
-		c.JSON(404, gin.H{"error": "No record found for this city"})
+		respond.Error(c, http.StatusNotFound, "weather_not_found", "No record found for this city")
 		return
 	}
-	c.JSON(200, weather)
+	respond.JSON(c, http.StatusOK, weather)
 }
 
 // CreateWeatherRequest represents the request body for creating weather
@@ -109,22 +122,26 @@ type CreateWeatherRequest struct {
 // @Failure 400 {object} map[string]string "Bad request or failed to fetch weather"
 // @Failure 401 {object} map[string]string "Unauthorized"
 // @Router /weather [post]
-func CreateWeather(c *gin.Context) {
+func (h *WeatherHandler) CreateWeather(c *gin.Context) {
 	var input CreateWeatherRequest
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		respond.ValidationError(c, err.Error())
 		return
 	}
 
-	weather, err := weather.FetchCurrentWeather(input.CityName, input.Country)
+	weatherData, err := h.weatherClient.FetchCurrentWeather(c.Request.Context(), input.CityName, input.Country)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "Failed to fetch weather: " + err.Error()})
+		respond.Error(c, http.StatusBadRequest, "weather_fetch_failed", "Failed to fetch weather: "+err.Error())
 		return
 	}
 
-	db.DB.Create(weather)
-	c.JSON(201, weather)
+	if err := h.db.Create(weatherData).Error; err != nil {
+		respond.Error(c, http.StatusInternalServerError, "weather_create_failed", "Failed to create weather record")
+		return
+	}
+
+	respond.JSON(c, http.StatusCreated, weatherData)
 }
 
 // @Summary Get weather by ID
@@ -135,15 +152,15 @@ func CreateWeather(c *gin.Context) {
 // @Success 200 {object} models.Weather
 // @Failure 404 {object} map[string]string "Weather record not found"
 // @Router /weather/{id} [get]
-func GetWeatherByID(c *gin.Context) {
+func (h *WeatherHandler) GetWeatherByID(c *gin.Context) {
 	id := c.Param("id")
 	var weather models.Weather
-	result := db.DB.Where("id = ?", id).First(&weather)
+	result := h.db.Where("id = ?", id).First(&weather)
 	if result.Error != nil {
-		c.JSON(404, gin.H{"error": "Weather record not found"})
+		respond.Error(c, http.StatusNotFound, "weather_not_found", "Weather record not found")
 		return
 	}
-	c.JSON(200, weather)
+	respond.JSON(c, http.StatusOK, weather)
 }
 
 // UpdateWeatherRequest represents the request body for updating weather
@@ -169,19 +186,19 @@ type UpdateWeatherRequest struct {
 // @Failure 401 {object} map[string]string "Unauthorized"
 // @Failure 404 {object} map[string]string "Weather record not found"
 // @Router /weather/{id} [put]
-func UpdateWeather(c *gin.Context) {
+func (h *WeatherHandler) UpdateWeather(c *gin.Context) {
 	id := c.Param("id")
 	var weather models.Weather
-	result := db.DB.Where("id = ?", id).First(&weather)
+	result := h.db.Where("id = ?", id).First(&weather)
 	if result.Error != nil {
-		c.JSON(404, gin.H{"error": "Weather record not found"})
+		respond.Error(c, http.StatusNotFound, "weather_not_found", "Weather record not found")
 		return
 	}
 
 	var input UpdateWeatherRequest
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		respond.ValidationError(c, err.Error())
 		return
 	}
 
@@ -204,8 +221,12 @@ func UpdateWeather(c *gin.Context) {
 		weather.WindSpeed = input.WindSpeed
 	}
 
-	db.DB.Save(&weather)
-	c.JSON(200, weather)
+	if err := h.db.Save(&weather).Error; err != nil {
+		respond.Error(c, http.StatusInternalServerError, "weather_update_failed", "Failed to update weather record")
+		return
+	}
+
+	respond.JSON(c, http.StatusOK, weather)
 }
 
 // DeleteWeatherResponse represents the delete response
@@ -223,12 +244,12 @@ type DeleteWeatherResponse struct {
 // @Failure 401 {object} map[string]string "Unauthorized"
 // @Failure 404 {object} map[string]string "Weather record not found"
 // @Router /weather/{id} [delete]
-func DeleteWeather(c *gin.Context) {
+func (h *WeatherHandler) DeleteWeather(c *gin.Context) {
 	id := c.Param("id")
-	result := db.DB.Where("id = ?", id).Delete(&models.Weather{})
+	result := h.db.Where("id = ?", id).Delete(&models.Weather{})
 	if result.Error != nil || result.RowsAffected == 0 {
-		c.JSON(404, gin.H{"error": "Weather record not found"})
+		respond.Error(c, http.StatusNotFound, "weather_not_found", "Weather record not found")
 		return
 	}
-	c.JSON(200, DeleteWeatherResponse{Message: "Weather record deleted successfully"})
+	respond.JSON(c, http.StatusOK, DeleteWeatherResponse{Message: "Weather record deleted successfully"})
 }

@@ -3,38 +3,33 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"github.com/zarinpy/abrnoc_weather/internals/db"
 	"github.com/zarinpy/abrnoc_weather/internals/models"
 	"github.com/zarinpy/abrnoc_weather/internals/test"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func setupTestRouter() *gin.Engine {
+func setupAuthTestRouter(t *testing.T) (*gin.Engine, *AuthHandler) {
 	gin.SetMode(gin.TestMode)
-
-	// Setup test database
 	testDB := test.SetupTestDB()
-	db.DB = testDB
+	handler := NewAuthHandler(testDB, "test_secret_key")
 
 	router := gin.New()
-	router.POST("/auth/register", Register)
-	router.POST("/auth/login", Login)
+	router.POST("/auth/register", handler.Register)
+	router.POST("/auth/login", handler.Login)
 
-	return router
+	return router, handler
 }
 
 func TestRegister_Success(t *testing.T) {
-	router := setupTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupAuthTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	payload := RegisterRequest{
 		Username: "testuser",
@@ -50,19 +45,16 @@ func TestRegister_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 
 	var response models.User
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	if err != nil {
-		log.Fatalf("cannot decode json, %v", err)
-	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	assert.Equal(t, "testuser", response.Username)
 	assert.Empty(t, response.Password) // Password should not be returned
 	assert.NotEmpty(t, response.ID)
 }
 
 func TestRegister_DuplicateUsername(t *testing.T) {
-	router := setupTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupAuthTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	// Create first user
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), 12)
@@ -70,7 +62,7 @@ func TestRegister_DuplicateUsername(t *testing.T) {
 		Username: "testuser",
 		Password: string(hashedPassword),
 	}
-	db.DB.Create(&user)
+	handler.db.Create(&user)
 
 	// Try to register with same username
 	payload := RegisterRequest{
@@ -88,9 +80,9 @@ func TestRegister_DuplicateUsername(t *testing.T) {
 }
 
 func TestRegister_InvalidInput(t *testing.T) {
-	router := setupTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupAuthTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	// Test with short password
 	payload := RegisterRequest{
@@ -108,9 +100,9 @@ func TestRegister_InvalidInput(t *testing.T) {
 }
 
 func TestRegister_MissingFields(t *testing.T) {
-	router := setupTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupAuthTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	payload := map[string]string{
 		"username": "testuser",
@@ -127,11 +119,9 @@ func TestRegister_MissingFields(t *testing.T) {
 }
 
 func TestLogin_Success(t *testing.T) {
-	router := setupTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
-
-	os.Setenv("JWT_SECRET", "test_secret_key")
+	router, handler := setupAuthTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	// Create user
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), 12)
@@ -139,7 +129,7 @@ func TestLogin_Success(t *testing.T) {
 		Username: "testuser",
 		Password: string(hashedPassword),
 	}
-	db.DB.Create(&user)
+	handler.db.Create(&user)
 
 	payload := LoginRequest{
 		Username: "testuser",
@@ -160,9 +150,9 @@ func TestLogin_Success(t *testing.T) {
 }
 
 func TestLogin_InvalidUsername(t *testing.T) {
-	router := setupTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupAuthTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	payload := LoginRequest{
 		Username: "nonexistent",
@@ -179,17 +169,16 @@ func TestLogin_InvalidUsername(t *testing.T) {
 }
 
 func TestLogin_InvalidPassword(t *testing.T) {
-	router := setupTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupAuthTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
-	// Create user
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), 12)
 	user := models.User{
 		Username: "testuser",
 		Password: string(hashedPassword),
 	}
-	db.DB.Create(&user)
+	handler.db.Create(&user)
 
 	payload := LoginRequest{
 		Username: "testuser",
@@ -206,9 +195,9 @@ func TestLogin_InvalidPassword(t *testing.T) {
 }
 
 func TestLogin_MissingFields(t *testing.T) {
-	router := setupTestRouter()
-	defer test.CleanupTestDB(db.DB)
-	test.ResetDB(db.DB)
+	router, handler := setupAuthTestRouter(t)
+	defer test.CleanupTestDB(handler.db)
+	test.ResetDB(handler.db)
 
 	payload := map[string]string{
 		"username": "testuser",
